@@ -48,6 +48,29 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 WTF_CSRF_ENABLED = True
 
+# Superset's own Content-Security-Policy, kept under /bi (the route's
+# middleware sets none) and framed by the application only (decision 0089,
+# point 4.1 as ruled): no third-party origin, a nonce for scripts.
+TALISMAN_ENABLED = True
+TALISMAN_CONFIG = {
+    "content_security_policy": {
+        "base-uri": ["'self'"],
+        "default-src": ["'self'"],
+        "img-src": ["'self'", "blob:", "data:"],
+        "worker-src": ["'self'", "blob:"],
+        "connect-src": ["'self'"],
+        "object-src": "'none'",
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "font-src": ["'self'"],
+        "script-src": ["'self'", "'strict-dynamic'"],
+        "frame-ancestors": ["'self'"],
+    },
+    "content_security_policy_nonce_in": ["script-src"],
+    "frame_options": "SAMEORIGIN",
+    "force_https": False,
+    "session_cookie_secure": True,
+}
+
 # --- Sign-in: the core's provider, the only one; roles from bi_roles -----------
 ISSUER = required("QD_OIDC_ISSUER").rstrip("/")
 AUTH_TYPE = AUTH_OAUTH
@@ -130,7 +153,7 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802
 
 # --- Caches: Valkey, per person; no async queries, no Celery -------------------
 _VALKEY = f"redis://:{quote(secret('valkey-password'), safe='')}@{E('QD_VALKEY_HOST', 'valkey')}:6379"
-DATA_CACHE_SECONDS = 300  # decision 0089 point 3.6 (its Open 8 may change it)
+DATA_CACHE_SECONDS = 60  # decision 0089 point 3.6 as ruled: a withdrawn permission within a minute
 CACHE_CONFIG = {"CACHE_TYPE": "RedisCache", "CACHE_DEFAULT_TIMEOUT": 300, "CACHE_KEY_PREFIX": "superset_",
                 "CACHE_REDIS_URL": _VALKEY + "/0"}
 DATA_CACHE_CONFIG = {"CACHE_TYPE": "RedisCache", "CACHE_DEFAULT_TIMEOUT": DATA_CACHE_SECONDS,
@@ -138,6 +161,20 @@ DATA_CACHE_CONFIG = {"CACHE_TYPE": "RedisCache", "CACHE_DEFAULT_TIMEOUT": DATA_C
 FILTER_STATE_CACHE_CONFIG = dict(CACHE_CONFIG, CACHE_KEY_PREFIX="filter_")
 EXPLORE_FORM_DATA_CACHE_CONFIG = dict(CACHE_CONFIG, CACHE_KEY_PREFIX="explore_")
 RATELIMIT_STORAGE_URI = _VALKEY + "/2"
+
+# Sessions server-side in Valkey (decision 0089, point 5 as ruled): the
+# cookie holds a session id; the person's access token never travels in it.
+SESSION_SERVER_SIDE = True
+SESSION_TYPE = "redis"
+
+
+def _session_store():
+    from redis import Redis
+
+    return Redis.from_url(_VALKEY + "/3")
+
+
+SESSION_REDIS = _session_store()
 
 FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True,
