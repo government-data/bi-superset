@@ -1,0 +1,125 @@
+# The bi-superset module's compose, run by quality-sdk's update agent as the
+# project `bi-superset`:
+#
+#   docker compose --project-name bi-superset \
+#     --project-directory /opt/quality-data/bi-superset/current \
+#     --file /opt/quality-data/bi-superset/current/compose.yml \
+#     --env-file /opt/quality-data/bi-superset/.env up -d --no-build --wait
+#
+# Every image comes from the signed index, by digest: IMAGE_SUPERSET is the
+# image this repository releases (image/Dockerfile), IMAGE_VALKEY the Valkey
+# mirrored into this module's ECR repository. Nothing is pulled from Docker
+# Hub.
+#
+# Three services (core decision 0089, point 6; no Celery, its Open 5):
+#
+# - `superset-init`, one shot: migrates the metadata database, `superset
+#   init`, the module's roles and superset-init's own user; `superset`
+#   starts only once it has completed.
+# - `superset`, the web service under /bi, reached by Traefik on the edge
+#   network as bi-superset-superset (module.yaml's route), and the core's
+#   PostgreSQL on the database network.
+# - `valkey`, Superset's cache and rate limits only, on the module's own
+#   network; never used for events.
+#
+# Secrets are the files the agent writes in QD_SECRETS_DIR (quality-sdk
+# decision 0009), owned by uid 1000 with mode 0400: the three services run
+# as uid 1000. The rest of the environment is the agent's .env: QD_OIDC_*,
+# QD_DB_* and QD_SECRETS_DIR.
+name: bi-superset
+
+networks:
+  edge:
+    name: data-quality-edge
+    external: true
+  db:
+    name: data-quality-db
+    external: true
+  cache: {}
+
+volumes:
+  valkey-data: {}
+
+secrets:
+  secret-key:
+    file: ${QD_SECRETS_DIR:?}/secret-key
+  valkey-password:
+    file: ${QD_SECRETS_DIR:?}/valkey-password
+  database-password:
+    file: ${QD_SECRETS_DIR:?}/database-password
+  oidc-people-secret:
+    file: ${QD_SECRETS_DIR:?}/oidc-people-secret
+  oidc-machine-secret:
+    file: ${QD_SECRETS_DIR:?}/oidc-machine-secret
+  db-ca:
+    file: ${QD_DB_CA_FILE:?}
+
+x-superset: &superset
+  image: ${IMAGE_SUPERSET:?set IMAGE_SUPERSET to the image by digest}
+  user: "1000:1000"
+  read_only: true
+  tmpfs: [/tmp, /app/superset_home]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  secrets: [secret-key, valkey-password, database-password, oidc-people-secret, oidc-machine-secret, db-ca]
+  environment:
+    SUPERSET_APP_ROOT: /bi
+    QD_OIDC_ISSUER: ${QD_OIDC_ISSUER:?}
+    QD_OIDC_PEOPLE_CLIENT_ID: ${QD_OIDC_PEOPLE_CLIENT_ID:?}
+    QD_OIDC_MACHINE_CLIENT_ID: ${QD_OIDC_MACHINE_CLIENT_ID:?}
+    QD_DB_HOST: ${QD_DB_HOST:?}
+    QD_DB_PORT: ${QD_DB_PORT:-5432}
+    QD_DB_USER: ${QD_DB_USER:?}
+    QD_DB_NAME: ${QD_DB_NAME:?}
+    QD_DB_CA_FILE: /run/secrets/db-ca
+    QD_VALKEY_HOST: valkey
+
+services:
+  superset-init:
+    <<: *superset
+    entrypoint: ["/app/.venv/bin/python", "/app/qd/superset_init.py"]
+    restart: "no"
+    networks: [db, cache]
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  superset:
+    <<: *superset
+    entrypoint: ["/app/.venv/bin/gunicorn", "--workers", "2", "--threads", "8", "--worker-class", "gthread",
+                 "--bind", "0.0.0.0:8088", "--timeout", "120", "superset.app:create_app()"]
+    restart: unless-stopped
+    networks:
+      edge:
+        aliases: [bi-superset-superset]
+      db: {}
+      cache: {}
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8088/bi/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  valkey:
+    image: ${IMAGE_VALKEY:?set IMAGE_VALKEY to the Valkey image by digest}
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    secrets: [valkey-password]
+    entrypoint: ["sh", "-c", 'exec valkey-server --requirepass "$$(cat /run/secrets/valkey-password)" --dir /data --save "" --appendonly no']
+    restart: unless-stopped
+    networks: [cache]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", 'valkey-cli -a "$$(cat /run/secrets/valkey-password)" --no-auth-warning ping | grep -q PONG']
+      interval: 10s
+      timeout: 3s
+      retries: 10
