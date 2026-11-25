@@ -13,5 +13,7 @@ RUN uv pip install --python /app/.venv/bin/python --no-cache \
       psycopg2-binary==2.9.9
 # Superset reads /app/pythonpath/superset_config.py (its PYTHONPATH).
 COPY --chown=root:root --chmod=0444 config/superset_config.py /app/pythonpath/superset_config.py
+# The folder first: COPY --chmod would give it the file's 0444.
+RUN install -d -o root -g root -m 0755 /app/qd
 COPY --chown=root:root --chmod=0444 init/superset_init.py /app/qd/superset_init.py
 USER superset
