@@ -40,7 +40,17 @@ def required(name):
 SECRET_KEY = secret("secret-key")
 _DB = (f"postgresql+psycopg2://{quote(required('QD_DB_USER'))}:{quote(secret('database-password'), safe='')}"
        f"@{required('QD_DB_HOST')}:{E('QD_DB_PORT', '5432')}/{required('QD_DB_NAME')}")
-SQLALCHEMY_DATABASE_URI = _DB + f"?sslmode=verify-full&sslrootcert={quote(required('QD_DB_CA_FILE'))}"
+# verify-full by the installation's CA; QD_DB_SSLMODE=disable only for a
+# test installation whose PostgreSQL has no TLS (quality-sdk's harness).
+if E("QD_DB_SSLMODE", "verify-full") == "disable":
+    SQLALCHEMY_DATABASE_URI = _DB + "?sslmode=disable"
+else:
+    SQLALCHEMY_DATABASE_URI = _DB + f"?sslmode=verify-full&sslrootcert={quote(required('QD_DB_CA_FILE'))}"
+# The web entry point's CA, when its certificate is not publicly trusted:
+# the provider's discovery and token calls verify it.
+_WEB_CA = "/run/qd/web-ca.crt"
+if os.path.isfile(_WEB_CA) and os.path.getsize(_WEB_CA) > 0:
+    os.environ["REQUESTS_CA_BUNDLE"] = _WEB_CA
 ENABLE_PROXY_FIX = True
 PROXY_FIX_CONFIG = {"x_for": 1, "x_proto": 1, "x_host": 1, "x_port": 1, "x_prefix": 0}
 SESSION_COOKIE_SECURE = True

@@ -72,7 +72,12 @@ x-superset: &superset
     QD_DB_USER: ${QD_DB_USER:?}
     QD_DB_NAME: ${QD_DB_NAME:?}
     QD_DB_CA_FILE: /run/secrets/db-ca
+    QD_DB_SSLMODE: ${QD_DB_SSLMODE:-verify-full}
     QD_VALKEY_HOST: valkey
+  volumes:
+    # The web entry point's CA when its certificate is not publicly trusted
+    # (QD_WEB_CA_FILE in .env); empty otherwise.
+    - ${QD_WEB_CA_FILE:-/dev/null}:/run/qd/web-ca.crt:ro
 
 services:
   superset-init:
