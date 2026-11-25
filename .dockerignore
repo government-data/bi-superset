@@ -1,2 +1,3 @@
 *
 !config/superset_config.py
+!init/superset_init.py
