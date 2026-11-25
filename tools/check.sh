@@ -5,7 +5,7 @@
 # function 100). Needs bash, python3, yq and shellcheck (CI installs it;
 # locally it is skipped with a note when absent).
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 FAILED=0
 fail() { printf '[FAIL] %s\n' "$*"; FAILED=1; }
 
