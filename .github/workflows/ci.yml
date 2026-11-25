@@ -21,3 +21,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Checks
         run: bash tools/check.sh
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the image
+        run: docker build -f image/Dockerfile -t bi-superset:ci .
+      # The configuration loads with synthetic secrets and settings.
+      - name: The configuration loads
+        run: |
+          s=$(mktemp -d)
+          for f in secret-key database-password oidc-people-secret oidc-machine-secret valkey-password; do
+            openssl rand -hex 16 >"$s/$f"
+          done
+          chmod 755 "$s" && chmod 644 "$s"/*
+          docker run --rm --network none -v "$s:/run/secrets:ro" \
+            -e QD_DB_USER=bi_superset -e QD_DB_HOST=postgres -e QD_DB_NAME=bi_superset \
+            -e QD_DB_CA_FILE=/run/secrets/ca.crt -e QD_OIDC_ISSUER=https://qd.example/api/oauth \
+            -e QD_OIDC_PEOPLE_CLIENT_ID=bi-superset -e QD_OIDC_MACHINE_CLIENT_ID=bi-superset-machine \
+            --entrypoint /app/.venv/bin/python bi-superset:ci -c \
+            'import superset_config as c; assert c.FEATURE_FLAGS["CACHE_QUERY_BY_USER"]; print("configuration: OK")'
