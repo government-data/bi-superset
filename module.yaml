@@ -1,0 +1,106 @@
+# The bi-superset module's manifest for quality-sdk (decisions 0002 and
+# 0009): Apache Superset, the quality indicators' drawer (core decision
+# 0089). Its version is the module's one version source: a release tag is
+# `v` + this version.
+name: bi-superset
+version: 0.1.0
+
+# Superset reads the lake's gold layer only through Trino, as the person
+# (core decision 0089, point 3). The gold tables as a contract
+# (`quality-results`, its Open 7) come with the shipped dashboards.
+requires:
+  capabilities:
+    - name: sql-query
+      version: 1
+      protocols: [trino-client-protocol, mtls-internal]
+
+# Served at /bi on the installation's web entry point: the agent writes
+# Traefik's route to the `superset` service, reached on data-quality-edge
+# as bi-superset-superset (compose.yml).
+route:
+  path: /bi
+  service: superset
+  port: 8088
+
+# Superset signs people in itself, with the core's OIDC provider.
+auth: oidc
+
+# The full Superset is in the menu for BI authors and administrators only
+# (core decision 0089, point 9); the embedded dashboard has no entry.
+menu:
+  label:
+    en: Analytics
+    es: Análisis
+  path:
+    en: /bi/
+    es: /bi/
+  requires: bi-superset:Author
+
+oidc:
+  people:
+    redirect_paths: [/bi/oauth-authorized/qd]
+    logout_paths: [/bi/]
+    alg: ES256
+    pkce: true
+    role_claim:
+      name: bi_roles
+      values:
+        viewer: quality:ViewResults
+        author: bi-superset:Author
+        admin: bi-superset:Administer
+  # The module's own client: it exchanges a person's token for Trino, and
+  # lists gold's tables when no person is behind a connection.
+  machine:
+    capabilities: [sql-query]
+
+# The three services run as uid 1000 and read their secret files.
+secrets:
+  uid: 1000
+  generate:
+    - name: secret-key
+      bytes: 32
+      critical: true
+    - name: valkey-password
+      critical: false
+
+data:
+  # Users, roles, charts, dashboards and saved queries; no indicator.
+  databases:
+    - name: bi_superset
+      create: true
+      critical: true
+  # A cache only: rebuilt from Trino, never needed back.
+  volumes:
+    - name: valkey-data
+      service: valkey
+      path: /data
+      critical: false
+
+health:
+  services: [superset, valkey]
+  checks:
+    - service: superset
+      command: [curl, -fsS, -o, /dev/null, "http://127.0.0.1:8088/bi/health"]
+      timeout_secs: 10
+
+permissions:
+  actions:
+    - name: bi-superset:Author
+      description:
+        en: Create charts and dashboards
+        es: Crear gráficos y paneles
+    - name: bi-superset:Administer
+      description:
+        en: Administer the BI tool
+        es: Administrar la herramienta de BI
+  policies:
+    - name: bi-superset:Authors
+      description:
+        en: BI authors
+        es: Autores de BI
+      actions: [bi-superset:Author]
+    - name: bi-superset:Administrators
+      description:
+        en: BI administrators
+        es: Administradores de BI
+      actions: [bi-superset:Author, bi-superset:Administer]
