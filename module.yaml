@@ -76,8 +76,12 @@ data:
       path: /data
       critical: false
 
+# superset-init runs once at install and at every update, then ends: its
+# container exited with code 0 is healthy (quality-sdk decision 0002, needs
+# agent 0.9.0).
 health:
   services: [superset, valkey]
+  oneshot: [superset-init]
   checks:
     - service: superset
       command: [curl, -fsS, -o, /dev/null, "http://127.0.0.1:8088/bi/health"]
